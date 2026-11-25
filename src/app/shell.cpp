@@ -1,0 +1,522 @@
+// ProsperoPuzzles - App shell: library, game screens, transitions and saves.
+// Copyright (C) 2026 BlackBearReloaded
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "app/shell.hpp"
+
+#include "core/save_file.hpp"
+#include "games/registry.hpp"
+#include "games/g2048/g2048_scene.hpp"
+#include "games/sgt/sgt_scene.hpp"
+#include "games/tenfold/tenfold_scene.hpp"
+#include "platform/ps5/system.hpp"
+
+#include <algorithm>
+
+#include <unistd.h>
+
+namespace ppz::app
+{
+
+namespace
+{
+
+constexpr float kTransitionSeconds = 0.38f;
+constexpr std::uint16_t kLibraryVersion = 1;
+constexpr std::uint16_t kGameVersion = 1;
+
+} // namespace
+
+Shell::Shell(gfx::GlBatch &batch, const ui::Fonts &fonts, float surface_scale,
+             std::string data_root)
+    : batch_(batch), fonts_(fonts), surface_scale_(surface_scale), root_(std::move(data_root)),
+      library_(games::library_entries()), library_scene_(library_)
+{
+    save::ensure_directory(root_);
+    save::ensure_directory(root_ + "/games");
+    std::string data;
+    if (save::read_file(root_ + "/library.bin", &data))
+    {
+        const auto decoded = save::decode(save::Kind::library, data);
+        std::string focused;
+        if (decoded.ok && library_.decode(decoded.payload, &focused))
+        {
+            library_scene_.refresh();
+            library_scene_.focus_game(focused);
+        }
+        else
+        {
+            sys::log("[PPZ] library.bin ignored: %s", decoded.error.c_str());
+        }
+    }
+    settings_ = load_settings(root_);
+    library_scene_.reduced_motion = settings_.reduced_motion;
+    library_scene_.set_thumbnails(&thumbnails_);
+    int resumable = 0;
+    for (const games::GameInfo &game : games::all())
+    {
+        if (save::read_file(game_path(game.id), &data))
+        {
+            library_.set_in_progress(game.id, true);
+            ++resumable;
+        }
+        library_.set_completed(game.id, record_for(game).beaten);
+    }
+    request_thumbnails();
+    sys::log("[PPZ] library games=%zu favorites_loaded resumable=%d", library_.entries().size(),
+             resumable);
+}
+
+Settings Shell::load_settings(const std::string &data_root)
+{
+    Settings settings;
+    std::string data;
+    if (save::read_file(data_root + "/settings.bin", &data))
+    {
+        const auto decoded = save::decode(save::Kind::settings, data);
+        if (!decoded.ok || !decode_settings(decoded.payload, &settings))
+            sys::log("[PPZ] settings.bin ignored: %s", decoded.error.c_str());
+    }
+    return settings;
+}
+
+void Shell::request_thumbnails()
+{
+    // Previews show the game in progress, or a demo board.
+    for (const games::GameInfo &game : games::all())
+    {
+        std::string data_file;
+        std::string payload;
+        if (save::read_file(game_path(game.id), &data_file))
+        {
+            const auto decoded = save::decode(save::Kind::game, data_file);
+            if (decoded.ok)
+                payload = decoded.payload;
+        }
+        thumbnails_.request(game.id, payload);
+    }
+}
+
+void Shell::release_gpu()
+{
+    thumbnails_.reset(surface_scale_);
+    if (game_)
+    {
+        // Settings are only reachable from the library, but never keep a
+        // game's canvas across a context change: it resumes from its save.
+        save_game();
+        game_.reset();
+        stage_ = Stage::library;
+    }
+}
+
+void Shell::restore_gpu(float surface_scale)
+{
+    surface_scale_ = surface_scale;
+    thumbnails_.reset(surface_scale_);
+    request_thumbnails();
+}
+
+games::Record Shell::record_for(const games::GameInfo &game) const
+{
+    std::string data;
+    if (!save::read_file(stats_path(game.id), &data))
+        return {};
+    const auto decoded = save::decode(save::Kind::stats, data);
+    return decoded.ok ? games::describe(game, decoded.payload) : games::Record{};
+}
+
+std::string Shell::game_path(const std::string &id) const
+{
+    return root_ + "/games/" + id + ".sav";
+}
+
+std::string Shell::stats_path(const std::string &id) const
+{
+    return root_ + "/games/" + id + ".stats";
+}
+
+void Shell::save_library()
+{
+    const std::string error = save::write_atomic(
+        root_ + "/library.bin", save::encode(save::Kind::library, kLibraryVersion,
+                                             library_.encode(library_scene_.focused_id())));
+    if (!error.empty())
+        sys::log("[PPZ] library save failed: %s", error.c_str());
+}
+
+void Shell::save_game()
+{
+    if (!game_)
+        return;
+    const std::string id = game_->id();
+    const std::string stats = game_->stats();
+    if (!stats.empty())
+    {
+        const std::string error = save::write_atomic(
+            stats_path(id), save::encode(save::Kind::stats, kGameVersion, stats));
+        if (!error.empty())
+            sys::log("[PPZ] stats save failed %s: %s", id.c_str(), error.c_str());
+        if (const games::GameInfo *game = games::find(id))
+            library_.set_completed(id, games::describe(*game, stats).beaten);
+    }
+    const bool keep = game_->in_progress();
+    thumbnails_.request(id, keep ? game_->save() : std::string());
+    if (keep)
+    {
+        const std::string error = save::write_atomic(
+            game_path(id), save::encode(save::Kind::game, kGameVersion, game_->save()));
+        if (!error.empty())
+            sys::log("[PPZ] game save failed %s: %s", id.c_str(), error.c_str());
+        library_.set_in_progress(id, true);
+    }
+    else
+    {
+        // Solved, lost or untouched: nothing to resume.
+        ::unlink(game_path(id).c_str());
+        library_.set_in_progress(id, false);
+    }
+}
+
+void Shell::save_settings()
+{
+    const std::string error = save::write_atomic(
+        root_ + "/settings.bin", save::encode(save::Kind::settings, 1, encode_settings(settings_)));
+    if (!error.empty())
+        sys::log("[PPZ] settings save failed: %s", error.c_str());
+}
+
+void Shell::open_details(const std::string &id)
+{
+    const games::GameInfo *game = games::find(id);
+    if (game == nullptr)
+        return;
+    details_id_ = id;
+    const bool resumable = library_.is_in_progress(id);
+    std::vector<ui::Menu::Item> items;
+    items.push_back({resumable ? "Resume" : "Play", 1});
+    if (resumable)
+        items.push_back({"New game", 2});
+    items.push_back({library_.is_favorite(id) ? "Remove from favorites" : "Add to favorites", 3});
+    items.push_back({"How to play", 4});
+    items.push_back({"Close", 0});
+    details_.open(game->name, std::move(items), game->objective, record_for(*game).line);
+}
+
+void Shell::set_version(const std::string &version)
+{
+    version_ = version;
+    library_scene_.version = version;
+}
+
+void Shell::toast(const std::string &text)
+{
+    toast_text_ = text;
+    toast_timer_.start(2.2f);
+}
+
+void Shell::launch(const std::string &id)
+{
+    start_game(id, false);
+}
+
+void Shell::start_game(const std::string &id, bool fresh)
+{
+    const games::GameInfo *game = games::find(id);
+    if (game == nullptr)
+    {
+        cues_.push_back(audio::Cue::ui_error);
+        return;
+    }
+    std::string save_data;
+    std::string payload;
+    if (!fresh && save::read_file(game_path(id), &save_data))
+    {
+        const auto decoded = save::decode(save::Kind::game, save_data);
+        if (decoded.ok)
+            payload = decoded.payload;
+    }
+    switch (game->kind)
+    {
+    case games::Kind::sgt:
+        game_ = std::make_unique<sgt::SgtScene>(*game->sgt, batch_, fonts_, surface_scale_);
+        break;
+    case games::Kind::g2048:
+        game_ = std::make_unique<g2048::G2048Scene>(fonts_);
+        break;
+    case games::Kind::tenfold:
+        game_ = std::make_unique<tenfold::TenfoldScene>(fonts_);
+        break;
+    case games::Kind::native:
+        game_ = game->create(fonts_);
+        break;
+    }
+    std::string stats_data;
+    std::string stats_payload;
+    if (save::read_file(stats_path(id), &stats_data))
+    {
+        const auto decoded = save::decode(save::Kind::stats, stats_data);
+        if (decoded.ok)
+            stats_payload = decoded.payload;
+    }
+    game_->start(payload, stats_payload);
+    sys::log("[PPZ] launch game=%s resumed=%d", id.c_str(), payload.empty() ? 0 : 1);
+    stage_ = Stage::entering;
+    transition_.start(kTransitionSeconds);
+    save_library();
+}
+
+void Shell::update(const InputFrame &input, float dt)
+{
+    transition_.update(dt);
+    toast_timer_.update(dt);
+    confetti_.update(dt);
+    howto_.animate(dt);
+    switch (stage_)
+    {
+    case Stage::library:
+    {
+        thumbnails_.pump(2);
+        if (update_dialog_.is_open())
+        {
+            // The update dialog owns input; the library keeps animating beneath.
+            const ui::UpdateDialog::Result result = update_dialog_.update(input, dt, cues_);
+            library_scene_.update(InputFrame{}, dt, cues_);
+            details_.update(InputFrame{}, dt, cues_);
+            if (result == ui::UpdateDialog::Result::staged)
+                confetti_.burst(ui::theme::kTriangle, 0x2545f491u * ++celebrations_,
+                                settings_.reduced_motion);
+            else if (result == ui::UpdateDialog::Result::quit)
+                quit_ = true;
+            break;
+        }
+        update_dialog_.update(InputFrame{}, dt, cues_);
+        UpdateOffer offer;
+        if (updater_ != nullptr && !howto_.is_open() && !details_.is_open() &&
+            updater_->take(&offer))
+        {
+            sys::log("[PPZ] update offered version=%s installable=%d", offer.version.c_str(),
+                     offer.installable ? 1 : 0);
+            update_dialog_.open(*updater_, offer, settings_.reduced_motion);
+            cues_.push_back(audio::Cue::ui_notify);
+            library_scene_.update(InputFrame{}, dt, cues_);
+            break;
+        }
+        if (howto_.is_open())
+        {
+            howto_.update(input, dt, cues_);
+            library_scene_.update(InputFrame{}, dt, cues_);
+            break;
+        }
+        if (details_.is_open())
+        {
+            // The details menu owns input; the library keeps animating beneath.
+            const int choice = details_.update(input, dt, cues_);
+            library_scene_.update(InputFrame{}, dt, cues_);
+            if (choice == 1 || choice == 2)
+            {
+                details_.close();
+                start_game(details_id_, choice == 2);
+            }
+            else if (choice == 3)
+            {
+                const bool now = library_.toggle_favorite(details_id_);
+                library_scene_.refresh();
+                library_scene_.focus_game(details_id_);
+                save_library();
+                cues_.push_back(now ? audio::Cue::ui_favorite_on : audio::Cue::ui_favorite_off);
+                details_.close();
+            }
+            else if (choice == 4)
+            {
+                details_.close();
+                if (const games::GameInfo *game = games::find(details_id_))
+                    howto_.open(*game);
+            }
+            else if (choice == 0 || choice == ui::Menu::kCancelled)
+            {
+                details_.close();
+            }
+            break;
+        }
+        details_.update(InputFrame{}, dt, cues_);
+        const ui::LibraryRequest request = library_scene_.update(input, dt, cues_);
+        if (request.kind == ui::LibraryRequest::Kind::launch)
+        {
+            launch(request.game_id);
+        }
+        else if (request.kind == ui::LibraryRequest::Kind::favorites_changed)
+        {
+            save_library();
+        }
+        else if (request.kind == ui::LibraryRequest::Kind::details)
+        {
+            open_details(request.game_id);
+        }
+        else if (request.kind == ui::LibraryRequest::Kind::settings)
+        {
+            stage_ = Stage::settings;
+            transition_.start(kTransitionSeconds);
+        }
+        break;
+    }
+    case Stage::settings:
+    {
+        const auto result = settings_scene_.update(input, dt, cues_);
+        if (result == ui::SettingsScene::Result::changed)
+        {
+            library_scene_.reduced_motion = settings_.reduced_motion;
+            if (settings_.resolution != applied_resolution_)
+            {
+                applied_resolution_ = settings_.resolution;
+                display_mode_changed_ = true;
+            }
+            settings_changed_ = true;
+            save_settings();
+        }
+        else if (result == ui::SettingsScene::Result::close)
+        {
+            stage_ = Stage::library;
+        }
+        else if (result == ui::SettingsScene::Result::about)
+        {
+            stage_ = Stage::about;
+            transition_.start(kTransitionSeconds);
+        }
+        break;
+    }
+    case Stage::about:
+        if (about_scene_.update(input, cues_))
+            stage_ = Stage::settings;
+        break;
+    case Stage::entering:
+        library_scene_.update(InputFrame{}, dt, cues_);
+        if (!transition_.running)
+            stage_ = Stage::game;
+        break;
+    case Stage::game:
+    {
+        if (howto_.is_open())
+        {
+            howto_.update(input, dt, cues_);
+            break;
+        }
+        const games::SceneExit exit = game_->update(input, dt, cues_);
+        if (exit == games::SceneExit::howto)
+        {
+            if (const games::GameInfo *game = games::find(game_->id()))
+                howto_.open(*game);
+        }
+        if (std::find(cues_.begin(), cues_.end(), audio::Cue::complete) != cues_.end())
+        {
+            const games::GameInfo *game = games::find(game_->id());
+            confetti_.burst(game != nullptr ? game->accent : ui::theme::kFocus,
+                            0x2545f491u * ++celebrations_, settings_.reduced_motion);
+        }
+        autosave_ += dt;
+        const bool moved = !cues_.empty();
+        if (exit == games::SceneExit::library)
+        {
+            save_game();
+            save_library();
+            library_scene_.focus_game(game_->id());
+            stage_ = Stage::leaving;
+            transition_.start(kTransitionSeconds);
+        }
+        else if (moved && autosave_ > 1.0f)
+        {
+            // Throttled autosave after activity.
+            save_game();
+            autosave_ = 0.0f;
+        }
+        break;
+    }
+    case Stage::leaving:
+        library_scene_.update(InputFrame{}, dt, cues_);
+        if (!transition_.running)
+        {
+            game_.reset();
+            stage_ = Stage::library;
+        }
+        break;
+    }
+}
+
+void Shell::draw(gfx::DrawList &list) const
+{
+    const float p = tween::cubic_in_out(transition_.progress());
+    switch (stage_)
+    {
+    case Stage::library:
+        library_scene_.draw(list, fonts_);
+        details_.draw(list, fonts_);
+        update_dialog_.draw(list, fonts_);
+        break;
+    case Stage::settings:
+        list.push_opacity(transition_.running ? p : 1.0f);
+        settings_scene_.draw(list, fonts_,
+                             version_.empty() ? std::string("ProsperoPuzzles")
+                                              : "ProsperoPuzzles  \xC2\xB7  Version " + version_);
+        list.pop_opacity();
+        break;
+    case Stage::about:
+        list.push_opacity(transition_.running ? p : 1.0f);
+        about_scene_.draw(list, fonts_, version_);
+        list.pop_opacity();
+        break;
+    case Stage::entering:
+        // The library zooms toward the viewer and fades while the game arrives.
+        list.push_transform(1.0f + 0.12f * p, 960, 540, 0, 0);
+        list.push_opacity(1.0f - p);
+        library_scene_.draw(list, fonts_);
+        list.pop_opacity();
+        list.pop_transform();
+        list.push_transform(0.94f + 0.06f * p, 960, 540, 0, 0);
+        list.push_opacity(p);
+        game_->draw(list);
+        list.pop_opacity();
+        list.pop_transform();
+        break;
+    case Stage::game:
+        game_->draw(list);
+        break;
+    case Stage::leaving:
+        list.push_transform(1.0f + 0.12f * (1.0f - p), 960, 540, 0, 0);
+        list.push_opacity(p);
+        library_scene_.draw(list, fonts_);
+        list.pop_opacity();
+        list.pop_transform();
+        list.push_opacity(1.0f - p);
+        game_->draw(list);
+        list.pop_opacity();
+        break;
+    }
+    confetti_.draw(list);
+    howto_.draw(list, fonts_);
+    if (toast_timer_.running)
+    {
+        const float t = toast_timer_.progress();
+        const float alpha = t < 0.1f ? t / 0.1f : (t > 0.85f ? (1.0f - t) / 0.15f : 1.0f);
+        const float width = fonts_.semibold->measure(toast_text_, 28) + 64.0f;
+        list.push_opacity(alpha);
+        list.shadow({960 - width * 0.5f, 874, width, 64}, 32, 20, ui::theme::kShadow);
+        list.rounded_rect({960 - width * 0.5f, 866, width, 64}, 32, ui::theme::kPaper);
+        list.text(*fonts_.semibold, fonts_.semibold_texture, toast_text_, 960, 908, 28,
+                  ui::theme::kInk, gfx::Align::center);
+        list.pop_opacity();
+    }
+}
+
+std::vector<audio::Cue> Shell::take_cues()
+{
+    std::vector<audio::Cue> out;
+    out.swap(cues_);
+    return out;
+}
+
+std::string Shell::active_game() const
+{
+    return game_ && stage_ == Stage::game ? game_->id() : std::string();
+}
+
+} // namespace ppz::app

@@ -1,0 +1,158 @@
+// ProsperoPuzzles - App shell: library, game screens, transitions and saves.
+// Copyright (C) 2026 BlackBearReloaded
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#pragma once
+
+#include "app/thumbnails.hpp"
+#include "audio/cues.hpp"
+#include "core/input.hpp"
+#include "core/library.hpp"
+#include "core/settings.hpp"
+#include "core/tween.hpp"
+#include "core/updater.hpp"
+#include "games/game_scene.hpp"
+#include "games/records.hpp"
+#include "gfx/draw_list.hpp"
+#include "gfx/gl_batch.hpp"
+#include "ui/about_scene.hpp"
+#include "ui/confetti.hpp"
+#include "ui/howto_card.hpp"
+#include "ui/library_scene.hpp"
+#include "ui/menu.hpp"
+#include "ui/settings_scene.hpp"
+#include "ui/theme.hpp"
+#include "ui/update_dialog.hpp"
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace ppz::app
+{
+
+// Owns the scene flow: Library -> game -> Library. Saves favorites and games
+// in progress as they change (a shell close or GPU fail-stop skips quit
+// handlers, so nothing waits for exit).
+class Shell
+{
+  public:
+    Shell(gfx::GlBatch &batch, const ui::Fonts &fonts, float surface_scale, std::string data_root);
+
+    // The saved settings, read before the display opens (defaults if absent).
+    static Settings load_settings(const std::string &data_root);
+
+    void update(const InputFrame &input, float dt);
+    void draw(gfx::DrawList &list) const;
+
+    // Sounds requested since the last call.
+    std::vector<audio::Cue> take_cues();
+    // Game id whose sounds should use per-game overrides ("" in the library).
+    std::string active_game() const;
+
+    // The app version (param.json contentVersion) for the library and Settings.
+    void set_version(const std::string &version);
+    const Settings &settings() const
+    {
+        return settings_;
+    }
+    // Host previews can provide an updater; the shell presents its offer in
+    // the library. Not owned; nullptr leaves updates out.
+    void set_updater(Updater *updater)
+    {
+        updater_ = updater;
+    }
+    // True while the update dialog is on screen.
+    bool update_dialog_open() const
+    {
+        return update_dialog_.is_open();
+    }
+    // True once the update is staged and the app must close for it.
+    bool take_quit()
+    {
+        const bool quit = quit_;
+        quit_ = false;
+        return quit;
+    }
+    // Records the resolution the display actually opened with.
+    void set_applied_resolution(int resolution)
+    {
+        applied_resolution_ = resolution;
+    }
+    // True once after the settings changed (the caller applies them).
+    bool take_settings_changed()
+    {
+        const bool changed = settings_changed_;
+        settings_changed_ = false;
+        return changed;
+    }
+    // True once after the Resolution setting changed: the caller restarts the
+    // display between release_gpu() and restore_gpu().
+    bool take_display_mode_changed()
+    {
+        const bool changed = display_mode_changed_;
+        display_mode_changed_ = false;
+        return changed;
+    }
+    // Frees every GL object the shell owns (previews, a running game's canvas)
+    // before the GL context is destroyed.
+    void release_gpu();
+    // Renders again at the new surface scale in a fresh GL context.
+    void restore_gpu(float surface_scale);
+
+  private:
+    enum class Stage
+    {
+        library,
+        entering, // library zooms out, game fades in
+        game,
+        leaving, // game fades out, library returns
+        settings,
+        about,
+    };
+
+    void launch(const std::string &id);
+    void save_library();
+    void save_game();
+    std::string game_path(const std::string &id) const;
+    std::string stats_path(const std::string &id) const;
+    void toast(const std::string &text);
+    void save_settings();
+    void open_details(const std::string &id);
+    // The player's records for a game, read from its stats file.
+    games::Record record_for(const games::GameInfo &game) const;
+    void start_game(const std::string &id, bool fresh);
+    void request_thumbnails();
+
+    gfx::GlBatch &batch_;
+    ui::Fonts fonts_;
+    float surface_scale_;
+    std::string root_;
+    Library library_;
+    ui::LibraryScene library_scene_;
+    std::unique_ptr<games::GameScene> game_;
+    Stage stage_ = Stage::library;
+    tween::Timer transition_;
+    tween::Timer toast_timer_;
+    std::string toast_text_;
+    std::vector<audio::Cue> cues_;
+    float autosave_ = 0.0f;
+    Settings settings_;
+    bool settings_changed_ = true;
+    bool display_mode_changed_ = false;
+    int applied_resolution_ = -1; // resolution the display was opened with
+    ui::SettingsScene settings_scene_{settings_};
+    ui::AboutScene about_scene_;
+    ui::Menu details_;
+    Thumbnails thumbnails_{batch_, fonts_, surface_scale_};
+    std::string details_id_;
+    std::string version_;
+    ui::Confetti confetti_;
+    ui::HowToCard howto_;
+    std::uint32_t celebrations_ = 0;
+    Updater *updater_ = nullptr;
+    ui::UpdateDialog update_dialog_;
+    bool quit_ = false;
+};
+
+} // namespace ppz::app
