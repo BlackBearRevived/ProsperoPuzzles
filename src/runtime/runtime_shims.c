@@ -18,8 +18,7 @@ extern int sceKernelUsleep(uint32_t microseconds);
 static char ppz_log_buffer[1024u * 1024u];
 static char ppz_error_buffer[64u * 1024u];
 
-/* The app log receipt, in the app's data folder. main opens it once filesystem
- * access has decided where that is (platform/ps5/storage.hpp). */
+/* Keep the app log in the title's writable data directory. */
 void ppz_open_log(const char *directory)
 {
     char path[160];
@@ -34,7 +33,7 @@ void ppz_open_log(const char *directory)
     rename(path, previous);
     FILE *stream = freopen(path, "w", stdout);
     /* Start a fresh receipt, then keep stdout buffered: ps5-opengl telemetry is
-     * chatty and synchronous writes to /data can stall rendering and audio.
+     * chatty and synchronous writes can stall rendering and audio.
      * sys::flush_log() writes it out at the moments that matter. */
     if (stream != NULL)
         stream = freopen(path, "a", stdout);
@@ -76,5 +75,26 @@ int mkstemps(char *template_name, int suffix_length)
     return -1;
 }
 
-/* openlog, popen and pclose, which Mesa also references, come from
- * update/console_curl.c (libcurl asks for them too). */
+/* Mesa references these optional services. Keep its regular log output and
+ * report subprocesses as unavailable in the native app. */
+void openlog(const char *identifier, int option, int facility)
+{
+    (void)identifier;
+    (void)option;
+    (void)facility;
+}
+
+FILE *popen(const char *command, const char *mode)
+{
+    (void)command;
+    (void)mode;
+    errno = ENOSYS;
+    return NULL;
+}
+
+int pclose(FILE *stream)
+{
+    (void)stream;
+    errno = ENOSYS;
+    return -1;
+}
