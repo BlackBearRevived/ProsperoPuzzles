@@ -100,7 +100,7 @@ void AboutScene::draw(gfx::DrawList &list, const Fonts &fonts, const std::string
     credits.kicker("PS5 EDITION");
     credits.body("ProsperoPuzzles is an unofficial PS5 homebrew collection");
     credits.body("brought to you by BlackBearReloaded.");
-    credits.link("github.com/blackbearreloaded/ProsperoPuzzles");
+    credits.link("github.com/BlackBearRevived/ProsperoPuzzles");
 
     // Everything else the app is built on, plus the version.
     list.rounded_rect({kInfoLeft, kTop, kInfoWidth, kBottom - kTop}, theme::kRadiusCard, kPanel);
