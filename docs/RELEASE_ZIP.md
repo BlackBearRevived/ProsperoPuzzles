@@ -11,7 +11,8 @@ On Windows, `./build.ps1` runs the same build through WSL.
 
 CI installs the [ps5-pkgkit v0.1.0 wheel](https://github.com/BlackBearRevived/ps5-pkgkit/releases/tag/v0.1.0)
 with pip, verifies its pinned SHA-256, and builds a PS5 homebrew `.pkg` from the
-same title folder for free Games-area apps. CI verifies the PKG and publishes
+same title folder for free Games-area apps using the fast Kraken preset.
+CI verifies the PKG and publishes
 both formats with their checksums when a new version tag is pushed. Media-area
 apps release as a ZIP.
 

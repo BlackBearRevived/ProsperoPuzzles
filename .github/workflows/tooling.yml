@@ -198,7 +198,7 @@ jobs:
         run: |
           python -m pip install --no-index --no-deps --require-hashes \
             'https://github.com/BlackBearRevived/ps5-pkgkit/releases/download/v0.1.0/ps5_pkgkit-0.1.0-py3-none-any.whl#sha256=71cfa598c509322c6752c094486935a8334d7cf0fceb73e838810e46a3823541'
-          ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg"
+          ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg" --level fast
           ps5-pkgkit verify "dist/$TITLE_ID.pkg"
           cd dist
           sha256sum "$TITLE_ID.pkg" > "$TITLE_ID.pkg.sha256"
