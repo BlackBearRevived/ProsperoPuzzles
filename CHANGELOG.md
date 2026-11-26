@@ -1,5 +1,10 @@
 # Changelog
 
+## 01.000.030
+
+- Updated the PS5 selection and launch backgrounds with painted-wood puzzle artwork.
+- Added a golden wooden puzzle-piece launcher icon.
+
 ## 01.000.020
 
 - Added a PS5 homebrew PKG alongside the folder ZIP.
