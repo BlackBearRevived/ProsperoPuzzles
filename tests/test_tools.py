@@ -189,9 +189,9 @@ class ToolTests(unittest.TestCase):
         self.assertIn('sha256sum "$TITLE_ID.zip" > SHA256SUMS', workflow)
         self.assertIn("pip install --no-index --no-deps --require-hashes", workflow)
         self.assertIn(
-            'ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg" --level fast', workflow
+            'ps5-pkgkit build "dist/$TITLE_ID" -o "$package" --level fast', workflow
         )
-        self.assertIn('ps5-pkgkit verify "dist/$TITLE_ID.pkg"', workflow)
+        self.assertIn('ps5-pkgkit verify "$package"', workflow)
         self.assertIn("if: steps.version.outputs.pkg-supported == 'true'", workflow)
         self.assertIn("${#files[@]} != 2 * ${#checksums[@]}", workflow)
         self.assertIn('checksums+=("$TITLE_ID.pkg.sha256")', workflow)

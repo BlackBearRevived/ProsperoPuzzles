@@ -145,8 +145,8 @@ make audio-check     # validate sound effects and music
 ## GitHub Actions and releases
 
 The [Build workflow](.github/workflows/tooling.yml) runs on pull requests,
-pushes to `main`, version tags, manual runs, and nightly. The nightly run
-keeps its dependency and compiler caches warm. The workflow:
+pushes to `main`, version tags, manual runs, and nightly at 06:41 UTC.
+The workflow:
 
 1. installs the public Linux/PS5 build prerequisites;
 2. validates the title ID and `contentVersion` in `sce_sys/param.json`;
@@ -157,6 +157,12 @@ keeps its dependency and compiler caches warm. The workflow:
 6. installs the pinned ps5-pkgkit wheel with pip and builds and verifies
    `PPSA99006.pkg` from the same staged folder for free Games-area apps; and
 7. uploads the release files with their SHA-256 checksums.
+
+Successful builds on `main` save dependency and compiler caches. Nightly builds
+keep them warm for future runs, including pull requests and version tags.
+Repeated runs of the same `main` commit reuse the PKG when the staged title
+files match exactly. CI verifies the cached package and regenerates its
+checksum. Version tags build a fresh PKG for publication.
 
 Every pull request gets an installable build named by its number and commit: see
 [Pull-request builds](docs/PULL_REQUEST_BUILDS.md).

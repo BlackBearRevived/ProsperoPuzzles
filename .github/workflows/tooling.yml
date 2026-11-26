@@ -60,7 +60,8 @@ jobs:
           sudo apt-get install --yes clang-18 clang-format-18 clang-tidy-18 libclang-rt-18-dev lld-18 make ninja-build ccache pkg-config tar unzip wget
 
       - name: Restore dependencies
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             .deps/native
@@ -70,10 +71,11 @@ jobs:
           key: deps-${{ runner.os }}-${{ runner.arch }}-ubuntu24-python313-${{ hashFiles('tools/setup-*-dependencies.sh', 'tools/fetch-opengl-sdk.sh') }}
 
       - name: Restore compiler cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: compiler-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: .deps/ccache
-          key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-ubuntu24-clang18-${{ github.sha }}
+          key: ccache-v2-${{ runner.os }}-${{ runner.arch }}-ubuntu24-clang18-${{ hashFiles('Makefile', '.github/workflows/tooling.yml', 'src/**', 'tests/**', 'tooling/**', 'tools/**', 'third_party/**', 'patches/**', 'runtime/libc.prx.sha256') }}
           restore-keys: |
             ccache-v2-${{ runner.os }}-${{ runner.arch }}-ubuntu24-clang18-
 
@@ -193,13 +195,45 @@ jobs:
           cd dist
           sha256sum "$TITLE_ID.zip" > SHA256SUMS
 
-      - name: Build and verify the PS5 package
+      - name: Install ps5-pkgkit
         if: steps.version.outputs.pkg-supported == 'true'
         run: |
           python -m pip install --no-index --no-deps --require-hashes \
             'https://github.com/BlackBearRevived/ps5-pkgkit/releases/download/v0.1.0/ps5_pkgkit-0.1.0-py3-none-any.whl#sha256=71cfa598c509322c6752c094486935a8334d7cf0fceb73e838810e46a3823541'
-          ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg" --level fast
-          ps5-pkgkit verify "dist/$TITLE_ID.pkg"
+
+      # Only default-branch runs can reuse a PKG. Include the commit so its
+      # provenance always names the source commit that built it.
+      - name: Fingerprint the staged title for PKG reuse
+        id: pkg-source
+        if: steps.version.outputs.pkg-supported == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        shell: bash
+        run: |
+          manifest=$(ps5-pkgkit inspect-source "dist/$TITLE_ID" --json |
+            python -c 'import json, sys; print(json.load(sys.stdin)["manifest_sha256"])')
+          [[ $manifest =~ ^[0-9a-f]{64}$ ]]
+          echo "sha256=$manifest" >> "$GITHUB_OUTPUT"
+
+      - name: Restore matching PS5 package
+        id: pkg-cache
+        if: steps.pkg-source.outputs.sha256 != ''
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: dist/${{ env.TITLE_ID }}.pkg
+          key: pkg-v1-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}-${{ steps.pkg-source.outputs.sha256 }}
+
+      - name: Build and verify the PS5 package
+        if: steps.version.outputs.pkg-supported == 'true'
+        env:
+          PKG_CACHE_HIT: ${{ steps.pkg-cache.outputs.cache-hit }}
+        shell: bash
+        run: |
+          package="dist/$TITLE_ID.pkg"
+          if [[ $PKG_CACHE_HIT == true ]] && ps5-pkgkit verify "$package"; then
+            echo "Reused verified PS5 package from the cache."
+          else
+            ps5-pkgkit build "dist/$TITLE_ID" -o "$package" --level fast
+            ps5-pkgkit verify "$package"
+          fi
           cd dist
           sha256sum "$TITLE_ID.pkg" > "$TITLE_ID.pkg.sha256"
 
@@ -224,6 +258,33 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+      # Pull requests and tags restore native caches from the default branch.
+      # Successful default-branch builds keep the shared entries up to date.
+      - name: Save dependencies
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .deps/native
+            .deps/test
+            .deps/pacbrew
+            .deps/ps5-opengl
+          key: ${{ steps.dependencies.outputs.cache-primary-key }}
+
+      - name: Save compiler cache
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.compiler-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .deps/ccache
+          key: ${{ steps.compiler-cache.outputs.cache-primary-key }}
+
+      - name: Save verified PS5 package
+        if: steps.pkg-source.outputs.sha256 != '' && steps.pkg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: dist/${{ env.TITLE_ID }}.pkg
+          key: ${{ steps.pkg-cache.outputs.cache-primary-key }}
 
   release:
     name: GitHub release
