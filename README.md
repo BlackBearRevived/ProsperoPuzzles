@@ -4,7 +4,7 @@
 
 <h1 align="center">ProsperoPuzzles</h1>
 
-> **Latest release: [1.000.011](https://github.com/BlackBearRevived/ProsperoPuzzles/releases/tag/1.000.011).**
+> **Latest release: [1.000.020](https://github.com/BlackBearRevived/ProsperoPuzzles/releases/tag/1.000.020).**
 > 50 puzzle games, best-score records, sound effects, a shuffled soundtrack and
 > home-screen selection music, using PS5 OpenGL SDK 1.0.3.
 > Please report problems through [GitHub issues](https://github.com/BlackBearRevived/ProsperoPuzzles/issues).
@@ -75,7 +75,7 @@ Demo available by clicking the image below.
 | Shell title | `ProsperoPuzzles` |
 | Title ID | `PPSA99006` |
 | Category | Game |
-| Current version | `01.000.011` |
+| Current version | `01.000.020` |
 | Version source | [`sce_sys/param.json`](sce_sys/param.json) |
 | Writable data | `/download0/prosperopuzzles` |
 
@@ -262,8 +262,8 @@ See [Architecture](docs/ARCHITECTURE.md) for how the pieces fit together.
 [`sce_sys/param.json`](sce_sys/param.json) is the only application identity and
 release-version source. Its PS5-format `contentVersion` is read at startup and
 shown in the library header and Settings. The GitHub tag drops the leading
-zero from the first component. For example, metadata version `01.000.011`
-uses tag `1.000.011`. Push the checked commit to `main`, then push its version
+zero from the first component. For example, metadata version `01.000.020`
+uses tag `1.000.020`. Push the checked commit to `main`, then push its version
 tag to build and publish the release.
 
 Keep `PPSA99006`, `conceptId` and `contentId` stable for updates to this title.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 01.000.020
+
+- Added a PS5 homebrew PKG alongside the folder ZIP.
+- Published separate SHA-256 checksums and signed build provenance for both formats.
+- Restored the original ProsperoPuzzles Git history and tags.
+
 ## 01.000.011
 
 - Published the standard-sandbox build of ProsperoPuzzles under BlackBearRevived.
