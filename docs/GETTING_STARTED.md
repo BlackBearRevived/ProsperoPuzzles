@@ -195,12 +195,11 @@ dist/PPSA99999/
 ```
 
 The app folder is the only build output; see
-[The app folder and the release ZIP](RELEASE_ZIP.md).
+[The app folder and release files](RELEASE_ZIP.md).
 
 `runtime/libc.prx` is a generated, ignored file included in the application.
-Tagged GitHub Releases publish a ZIP of the directory-style application and its
-`SHA256SUMS`
-([The app folder and the release ZIP](RELEASE_ZIP.md)). Extract
-the ZIP before uploading its `<TITLE_ID>/` folder to `/data/homebrew`.
+New tagged releases include the ZIP and its checksum. Free Games-area titles
+also get the PKG and its checksum. Extract the ZIP before uploading its
+`<TITLE_ID>/` folder to `/data/homebrew`.
 
 Continue with [Deployment](DEPLOYMENT.md).

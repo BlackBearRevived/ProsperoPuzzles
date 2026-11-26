@@ -47,10 +47,9 @@ git push origin 1.002.003
 The release workflow checks the tag against `sce_sys/param.json`. For ordinary development, keep
 `masterVersion` at `01.00` and increment `contentVersion` for each release.
 Change `masterVersion` only when intentionally changing the compatible release
-baseline. Each tagged GitHub Release contains a ZIP of the directory-style
-application and its `SHA256SUMS`, both published by the workflow run of that
-tag and never attached by hand; a release that already has a ZIP is left as
-it is (see the [README](../README.md#github-actions-and-releases)).
+baseline. The workflow for each new tag publishes the app-folder ZIP and its
+checksum. Free Games-area titles also get the PKG and its checksum. A release that already has a ZIP is treated
+as complete. See [GitHub Actions and releases](../README.md#github-actions-and-releases).
 
 The loader-visible SDK and FSELF constants are internal build-format values,
 not application versions. They remain fixed to the cross-firmware-validated

@@ -98,7 +98,7 @@ See [Updates](docs/UPDATES.md) and [Storage](docs/STORAGE.md).
 The archived `01.000.010` build was exercised on PS5 hardware: every game generates
 and plays, the library, settings and records persist across relaunches, and the
 app presents at a steady 60 FPS with sound effects, music and home-screen
-selection music. The current ZIP is checked in CI. Broader validation across firmware versions, loaders and TVs
+selection music. CI checks the ZIP and PKG. Broader validation across firmware versions, loaders and TVs
 is welcome through [GitHub issues](https://github.com/BlackBearRevived/ProsperoPuzzles/issues).
 
 ## Requirements
@@ -121,7 +121,7 @@ Nothing is installed globally by the project build. See
 ## Build
 
 ```bash
-# The app folder and its ZIP: what CI and releases build.
+# Build the app folder and its ZIP locally.
 make
 ```
 
@@ -152,21 +152,20 @@ keeps its dependency and compiler caches warm. The workflow:
 2. validates the title ID and `contentVersion` in `sce_sys/param.json`;
 3. runs lint, GoogleTest and the integration tests;
 4. independently reproduces and verifies `runtime/libc.prx`;
-5. builds the app folder and archives it as `PPSA99006.zip`, every entry
-   stored as 0777; and
-6. writes `SHA256SUMS` for the ZIP and uploads both as the Actions artifact.
+5. builds the app folder and archives it as `PPSA99006.zip` with permissions
+   set to `0777` on every entry;
+6. installs the pinned ps5-pkgkit wheel with pip and builds and verifies
+   `PPSA99006.pkg` from the same staged folder for free Games-area apps; and
+7. uploads the release files with their SHA-256 checksums.
 
 Every pull request gets an installable build named by its number and commit: see
 [Pull-request builds](docs/PULL_REQUEST_BUILDS.md).
 
-Pushing a tag derived from `contentVersion` publishes a GitHub Release with the
-app-folder `.zip` and `SHA256SUMS`, built from the tagged commit. That is the
-only way a release is made: the workflow builds, attests, and publishes the
-two files, and files are not attached by hand. If the tag has no release yet,
-the workflow creates it; if a release exists without a ZIP (notes written in
-advance, or a draft), it adds the two files and leaves the title and notes
-alone; if a release already has a ZIP, nothing is replaced and the run ends
-with a warning.
+Pushing a tag derived from `contentVersion` publishes the ZIP and
+`SHA256SUMS` from the tagged commit. Supported titles also get the PKG and
+`PPSA99006.pkg.sha256`. The workflow signs provenance for public releases. A workflow run can
+attach the files to an existing release that has notes or a draft. A release
+that already has a ZIP is treated as complete, including older ZIP-only releases.
 
 ## Install or update
 
@@ -285,7 +284,7 @@ See [Configuration](docs/CONFIGURATION.md).
 | [Testing](docs/TESTING.md) | Host test boundaries and commands |
 | [Pull-request builds](docs/PULL_REQUEST_BUILDS.md) | An installable build per pull request: its artifact name, its label file, how to get it |
 | [Deployment](docs/DEPLOYMENT.md) | Safe folder staging |
-| [Release ZIP](docs/RELEASE_ZIP.md) | The app folder and its ZIP, the only outputs |
+| [Release files](docs/RELEASE_ZIP.md) | ZIP and PKG artifacts, publishing, and verification |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common build, launch and runtime failures |
 | [Platform notes](docs/PLATFORM_NOTES.md) | PS5 filesystem, loader and presentation constraints |
 | [Runtime shim](docs/RUNTIME_SHIM.md) | Clean-room `libc.prx` scope and reproduction |

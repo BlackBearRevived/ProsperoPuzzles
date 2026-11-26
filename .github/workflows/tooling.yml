@@ -34,6 +34,9 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
+      title-id: ${{ steps.version.outputs.title-id }}
+      pkg-supported: ${{ steps.version.outputs.pkg-supported }}
+      source-sha: ${{ steps.version.outputs.source-sha }}
     timeout-minutes: 45
     env:
       CCACHE_DIR: ${{ github.workspace }}/.deps/ccache
@@ -84,8 +87,16 @@ jobs:
         id: version
         shell: bash
         run: |
-          metadata=$(python3 -c 'import json; p=json.load(open("sce_sys/param.json")); print(p["titleId"], p["contentVersion"])')
-          read -r title_id content_version <<< "$metadata"
+          metadata=$(python3 - <<'PY'
+          import json
+
+          with open("sce_sys/param.json", encoding="utf-8") as source:
+              app = json.load(source)
+          pkg_supported = app.get("applicationCategoryType") == 0 and app.get("applicationDrmType") == "free"
+          print(app["titleId"], app["contentVersion"], str(pkg_supported).lower())
+          PY
+          )
+          read -r title_id content_version pkg_supported <<< "$metadata"
           [[ $title_id =~ ^PPSA[0-9]{5}$ ]] || exit 2
           [[ $content_version =~ ^[0-9]{2}\.[0-9]{3}\.[0-9]{3}$ ]] || exit 2
           release_version=$content_version
@@ -105,6 +116,9 @@ jobs:
           fi
           echo "version=$release_version" >> "$GITHUB_OUTPUT"
           echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "title-id=$title_id" >> "$GITHUB_OUTPUT"
+          echo "pkg-supported=$pkg_supported" >> "$GITHUB_OUTPUT"
+          echo "source-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Release this build: $release ($content_version)"
 
       # A pull request's build is named by its number and its own commit, on the
@@ -141,8 +155,7 @@ jobs:
       - name: Verify generated runtime is unchanged
         run: cd runtime && sha256sum -c libc.prx.sha256
 
-      # The ZIP is the one release format: in-app updates and ProsperoStore install from
-      # it. No compressed image is built or published here.
+      # The catalog and folder-based installs use the ZIP.
       - name: Build the release folder and ZIP
         run: make app
 
@@ -180,14 +193,24 @@ jobs:
           cd dist
           sha256sum "$TITLE_ID.zip" > SHA256SUMS
 
-      # Signed provenance: this ZIP was built by this workflow from this commit. Anyone can check a
-      # downloaded copy with `gh attestation verify <file> -R <owner>/<repo>`. Not for pull requests
-      # (a fork's run cannot sign), and not in a private repository (the plan does not include it).
-      - name: Attest the release ZIP
+      - name: Build and verify the PS5 package
+        if: steps.version.outputs.pkg-supported == 'true'
+        run: |
+          python -m pip install --no-index --no-deps --require-hashes \
+            'https://github.com/BlackBearRevived/ps5-pkgkit/releases/download/v0.1.0/ps5_pkgkit-0.1.0-py3-none-any.whl#sha256=71cfa598c509322c6752c094486935a8334d7cf0fceb73e838810e46a3823541'
+          ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg"
+          ps5-pkgkit verify "dist/$TITLE_ID.pkg"
+          cd dist
+          sha256sum "$TITLE_ID.pkg" > "$TITLE_ID.pkg.sha256"
+
+      # Public builds sign provenance for both formats.
+      - name: Attest the ZIP and PKG
         if: github.event_name != 'pull_request' && !github.event.repository.private
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/${{ env.TITLE_ID }}.zip
+          subject-path: |
+            dist/${{ env.TITLE_ID }}.zip
+            dist/${{ env.TITLE_ID }}.pkg
 
       - name: Upload build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -196,6 +219,8 @@ jobs:
           path: |
             dist/${{ env.TITLE_ID }}.zip
             dist/SHA256SUMS
+            dist/${{ env.TITLE_ID }}.pkg
+            dist/${{ env.TITLE_ID }}.pkg.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -208,6 +233,9 @@ jobs:
     permissions:
       actions: read
       contents: write
+    env:
+      TITLE_ID: ${{ needs.build.outputs.title-id }}
+      PKG_SUPPORTED: ${{ needs.build.outputs.pkg-supported }}
 
     steps:
       - name: Download verified build
@@ -219,35 +247,38 @@ jobs:
           --name "ProsperoPuzzles-$GITHUB_SHA"
           --dir release
 
-      - name: Prepare release assets
-        id: package
+      - name: Verify release assets
         shell: bash
         run: |
           set -euo pipefail
           cd release
           mapfile -d '' files < <(find . -type f -print0)
-          shopt -s nullglob
-          folder_zips=(PPSA*.zip)
-          # The artifact holds exactly these two files at its root.
-          if (( ${#files[@]} != 2 || ${#folder_zips[@]} != 1 )) || [[ ! -f SHA256SUMS ]]; then
-            echo "Expected exactly one app-folder ZIP and SHA256SUMS at the artifact root." >&2
+          checksums=(SHA256SUMS)
+          test -s "$TITLE_ID.zip"
+          if [[ $PKG_SUPPORTED == true ]]; then
+            test -s "$TITLE_ID.pkg"
+            checksums+=("$TITLE_ID.pkg.sha256")
+          fi
+          if (( ${#files[@]} != 2 * ${#checksums[@]} )); then
+            echo "Expected each title archive and its checksum file at the artifact root." >&2
             exit 1
           fi
-          sha256sum -c SHA256SUMS
-          echo "folder_zip=${folder_zips[0]}" >> "$GITHUB_OUTPUT"
-          echo "checksum=SHA256SUMS" >> "$GITHUB_OUTPUT"
+          sha256sum -c --strict "${checksums[@]}"
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
-          FOLDER_ZIP: ${{ steps.package.outputs.folder_zip }}
-          CHECKSUM: ${{ steps.package.outputs.checksum }}
+          SOURCE_SHA: ${{ needs.build.outputs.source-sha }}
         shell: bash
         run: |
           set -euo pipefail
           TAG=$VERSION
-          assets=("release/$FOLDER_ZIP" "release/$CHECKSUM")
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$SOURCE_SHA"
+          assets=("release/$TITLE_ID.zip" release/SHA256SUMS)
+          if [[ $PKG_SUPPORTED == true ]]; then
+            assets+=("release/$TITLE_ID.pkg" "release/$TITLE_ID.pkg.sha256")
+          fi
           # The files of a release come from the run of its tag, once. A release without a
           # ZIP (notes written in advance, or a draft) gets them and keeps its title and
           # notes; one that already has a ZIP is never touched, because the catalog records

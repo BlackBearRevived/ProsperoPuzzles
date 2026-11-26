@@ -135,8 +135,8 @@ result is `/data/homebrew/<TITLE_ID>/eboot.bin` with its `sce_sys/`,
 
 Do not upload the ZIP file itself and do not extract only its contents directly
 into `/data/homebrew`. ShadowMountPlus consumes the extracted title folder, not
-the ZIP container. Releases carry the ZIP only; if a `<TITLE_ID>.ffpkg` or
-`<TITLE_ID>.ffpfsc` image from an older version is still on the console,
+the ZIP container. If a `<TITLE_ID>.ffpkg` or `<TITLE_ID>.ffpfsc` image
+from an older version is still on the console,
 delete it: a folder and an image with the same title ID must not both be in
 scan paths.
 

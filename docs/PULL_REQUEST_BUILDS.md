@@ -32,10 +32,10 @@ A pull request never publishes a release: only a version tag does.
    **Actions**).
 2. Download the artifact named `ProsperoPuzzles-PR<number>-<commit>` from the run's
    **Artifacts** list. GitHub requires a signed-in account for this.
-3. Unpack it: it holds `PPSA99006.zip` (the app folder) and `SHA256SUMS`. Check the
-   ZIP with `sha256sum -c SHA256SUMS`, then install as
-   described in [Deployment](DEPLOYMENT.md) or under "Install or update" in the
-   [README](../README.md).
+3. Unpack the artifact. Check `PPSA99006.zip` with `sha256sum -c SHA256SUMS`.
+   If the artifact includes a PKG, check it with
+   `sha256sum -c PPSA99006.pkg.sha256`. See [Deployment](DEPLOYMENT.md)
+   for installing the title folder from the ZIP.
 
 A first-time contributor's pull request does not build until a maintainer approves the
 workflow run. That is GitHub's default for public repositories and is worth keeping: the

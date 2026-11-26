@@ -181,15 +181,22 @@ class ToolTests(unittest.TestCase):
             self.assertIn("DEPLOY_FORMAT", refused.stderr)
             self.assertFalse(built.exists())
 
-    def test_automation_builds_the_zip_only(self):
+    def test_automation_builds_zip_and_pkg(self):
         workflow = (ROOT / ".github/workflows/tooling.yml").read_text(encoding="utf-8")
         self.assertNotIn("ffpfsc", workflow.lower())
         self.assertNotIn("MkPFS", workflow)
         self.assertIn("run: make app", workflow)
         self.assertIn('sha256sum "$TITLE_ID.zip" > SHA256SUMS', workflow)
-        self.assertIn("${#files[@]} != 2", workflow)
-        self.assertIn('assets=("release/$FOLDER_ZIP" "release/$CHECKSUM")', workflow)
-        # The ZIP is attested (signed provenance) once final, before the upload.
+        self.assertIn("pip install --no-index --no-deps --require-hashes", workflow)
+        self.assertIn('ps5-pkgkit build "dist/$TITLE_ID" -o "dist/$TITLE_ID.pkg"', workflow)
+        self.assertIn('ps5-pkgkit verify "dist/$TITLE_ID.pkg"', workflow)
+        self.assertIn("if: steps.version.outputs.pkg-supported == 'true'", workflow)
+        self.assertIn("${#files[@]} != 2 * ${#checksums[@]}", workflow)
+        self.assertIn('checksums+=("$TITLE_ID.pkg.sha256")', workflow)
+        self.assertIn('sha256sum -c --strict "${checksums[@]}"', workflow)
+        for name in ("$TITLE_ID.zip", "SHA256SUMS", "$TITLE_ID.pkg", "$TITLE_ID.pkg.sha256"):
+            self.assertIn(f"release/{name}", workflow)
+        # Both formats receive signed provenance before the upload.
         attest = (
             "uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6"
             " # v4.2.2"
@@ -197,9 +204,15 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(workflow.count(attest), 1)
         checked = workflow.index("- name: Check the ZIP and write release checksums\n")
         upload = workflow.index("- name: Upload build\n")
-        self.assertLess(checked, workflow.index(attest))
+        pkg = workflow.index("- name: Build and verify the PS5 package\n")
+        self.assertLess(checked, pkg)
+        self.assertLess(pkg, workflow.index(attest))
         self.assertLess(workflow.index(attest), upload)
-        self.assertIn("subject-path: dist/${{ env.TITLE_ID }}.zip\n", workflow)
+        self.assertIn(
+            "subject-path: |\n            dist/${{ env.TITLE_ID }}.zip\n"
+            "            dist/${{ env.TITLE_ID }}.pkg\n",
+            workflow,
+        )
         self.assertIn(
             "if: github.event_name != 'pull_request' && !github.event.repository.private\n",
             workflow,
@@ -208,7 +221,7 @@ class ToolTests(unittest.TestCase):
         for permission in needed:
             self.assertIn(f"      {permission}\n", workflow)
 
-        # No image is built: no target, no build mode, no script branch, no tooling.
+        # Legacy image formats stay out of the build and deployment tooling.
         gone = ("ffpkg", "ffpfsc", "exfat", "ufs2tool", "mkpfs")
         for name in ("Makefile", "tools/build.sh", "build.ps1",
                      ".github/workflows/tooling.yml"):
